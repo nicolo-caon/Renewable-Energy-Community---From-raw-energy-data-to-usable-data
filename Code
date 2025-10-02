@@ -1,0 +1,133 @@
+# Import all libraries #
+from google.colab import files
+import zipfile
+import os
+import glob
+import pandas as pd
+from collections import defaultdict
+
+# First upload a folder as zip and extract files, it contains e-distribuzione raw data csv about #
+uploaded = files.upload()
+zip_path = '/content/Immessa.zip'
+extract_folder = '/content/data'
+
+with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    zip_ref.extractall(extract_folder)
+
+print("Unzipped to:", extract_folder)
+
+# Find all CSV files recursively, set up a dictionary and load all csv #
+csv_files = glob.glob(os.path.join(extract_folder, '**', '*.csv'), recursive=True)
+print(f"Found {len(csv_files)} CSV files")
+
+# Dictionary
+dfs = {}
+
+# Load CSV
+for f in csv_files:
+    try:
+        df = pd.read_csv(
+            f,
+            sep=';',        # correct delimiter
+            decimal=',',    # convert , to . for decimals
+            index_col=0,    # first column = row names
+            engine='python',
+            on_bad_lines='warn'
+        )
+        dfs[os.path.basename(f)] = df
+        print(f"\nLoaded file: {os.path.basename(f)}")
+        print(df.head())  # show first 5 rows
+    except Exception as e:
+        print(f"Failed to read {f}: {e}")
+
+# Loop over each loaded DataFrame to check for NaN, we'll se a pattern #
+for filename, df in dfs.items():
+    nan_cols = df.columns[df.isna().any()].tolist()
+    if nan_cols:
+        print(f"File: {filename}")
+        print("Columns with NaN:", nan_cols)
+        print()
+
+# We want to group Production/consumption (whatever we uploaded) of energy by month, regardless of who consumes/procudes it. (File names include the month they refear to) #
+
+# Group files by month
+month_files = defaultdict(list)
+for filename in dfs.keys():
+    month = filename.split('_')[0]
+    month_files[month].append(filename)
+
+# We need to sum all data by month
+monthly_sums = {}
+
+for month, files in month_files.items():
+    print(f"Processing month: {month} with {len(files)} file(s)")
+    month_df = None
+    for f in files:
+        df = dfs[f]  # get cleaned DataFrame
+        if month_df is None:
+            month_df = df.copy()
+        else:
+            # sum cell by cell
+            month_df = month_df.add(df, fill_value=0)
+    monthly_sums[month] = month_df
+
+# Example: show summed DataFrame for 'maggio'
+if 'maggio' in monthly_sums:
+    print("\nSummed DataFrame for maggio:")
+    print(monthly_sums['maggio'].head())
+
+# We want to generate a single file with all data, ordered cronologically #
+
+all_months_df = pd.concat(monthly_sums.values(), axis=0)
+
+# Convert the index (dates) to datetime, handle dd/mm/yyyy format
+all_months_df.index = pd.to_datetime(all_months_df.index, dayfirst=True, errors='coerce')
+
+# Sort rows chronologically by date
+all_months_df = all_months_df.sort_index()
+
+print("\n✅ Final concatenated 15-min DataFrame:")
+print(all_months_df.head())
+
+# We have to aggregate 15 min data to hourly data #
+
+def sum_15min_to_hour(df):
+    cols = df.columns.tolist()
+    hourly_sums = []
+    for i in range(0, len(cols), 4):
+        group = cols[i:i+4]
+        hourly_sum = df[group].sum(axis=1)
+        hourly_sums.append(hourly_sum)
+
+    hourly_df = pd.concat(hourly_sums, axis=1)
+    hourly_df.columns = [f'Hour {i+1}' for i in range(len(hourly_df.columns))]
+    return hourly_df
+
+# Apply to all monthly_sums
+monthly_sums_hourly = {}
+for month, df in monthly_sums.items():
+    monthly_sums_hourly[month] = sum_15min_to_hour(df)
+    print(f"Hourly summed DataFrame for {month}:")
+    print(monthly_sums_hourly[month].head())
+
+all_months_hourly_df = pd.concat(monthly_sums_hourly.values(), axis=0)
+
+# Convert index (dates) to datetime and sort
+all_months_hourly_df.index = pd.to_datetime(all_months_hourly_df.index, dayfirst=True, errors='coerce')
+all_months_hourly_df = all_months_hourly_df.loc[all_months_hourly_df.index.notna()]
+all_months_hourly_df = all_months_hourly_df.sort_index()
+
+print("Final concatenated hourly DataFrame:")
+print(all_months_hourly_df.head())
+
+# Than we can save is the way we want, I need an excel file #
+# Format index as dd/mm/yyyy strings for readability
+all_months_hourly_df.index = all_months_hourly_df.index.strftime('%d/%m/%Y')
+all_months_hourly_df.index.name = 'Date'  # give the index column a name
+
+# Save to Excel
+output_excel = '/content/final_hourly_load.xlsx'
+all_months_hourly_df.to_excel(output_excel, index=True)
+
+# Trigger download in Colab
+files.download(output_excel)
