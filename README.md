@@ -6,7 +6,7 @@ This project provides a Python script to process monthly REC data downloaded fro
 
 # Workflow
 
-Data is manually downloaded month by month for each participant. Once downloaded, the files are organized into two separate folders: "immessa" for energy fed into the grid and "prelevata" for energy consumed from the grid, with each file named according to the month and name of the producer (e.g., gennaio_rossi.csv). Before processing, the monthly files are compressed into a ZIP file for each folder. The script processes one ZIP at a time, reading all included files and producing a single aggregated output with hourly intervals, regardless of the original producer or consumer.
+Data is manually downloaded month by month for each participant. Once downloaded, the files are organized into two separate folders: "immessa" for energy fed into the grid and "prelevata" for energy consumed from the grid, with each file named according to the month and name of the producer plus "i" for "immessa" or "p" for "prelevata (e.g., i_gennaio_rossi.csv). Before processing, the monthly files are compressed into a ZIP file for each folder. The script processes one ZIP at a time, reading all included files and producing a single aggregated output with hourly intervals, regardless of the original producer or consumer.
 
 To run the script, simply specify the ZIP file to process and the desired output file name. The result is a clean CSV containing the aggregated hourly data, ready for analysis or further reporting.
 
