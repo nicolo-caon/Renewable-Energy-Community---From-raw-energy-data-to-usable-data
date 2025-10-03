@@ -4,11 +4,14 @@ import zipfile
 import os
 import glob
 import pandas as pd
+import numpy as np
 from collections import defaultdict
 
 # First upload a folder as zip and extract files, it contains e-distribuzione raw data csv about #
 uploaded = files.upload()
-zip_path = '/content/Immessa.zip'
+zip_path = list(uploaded.keys())[0]   # e.g. "my_new_data.zip"
+zip_path = f'/content/{zip_path}'     # ensure full path
+
 extract_folder = '/content/data'
 
 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -86,7 +89,7 @@ all_months_df.index = pd.to_datetime(all_months_df.index, dayfirst=True, errors=
 # Sort rows chronologically by date
 all_months_df = all_months_df.sort_index()
 
-print("\n✅ Final concatenated 15-min DataFrame:")
+print("Final concatenated 15-min DataFrame:")
 print(all_months_df.head())
 
 # We have to aggregate 15 min data to hourly data #
@@ -121,13 +124,54 @@ print("Final concatenated hourly DataFrame:")
 print(all_months_hourly_df.head())
 
 # Than we can save is the way we want, I need an excel file #
-# Format index as dd/mm/yyyy strings for readability
+from google.colab import files
+
+# Convert index to datetime
+all_months_hourly_df.index = pd.to_datetime(all_months_hourly_df.index, dayfirst=True)
+
+# Format index as dd/mm/yyyy strings for readability in Excel
 all_months_hourly_df.index = all_months_hourly_df.index.strftime('%d/%m/%Y')
-all_months_hourly_df.index.name = 'Date'  # give the index column a name
+all_months_hourly_df.index.name = 'Date'
 
 # Save to Excel
-output_excel = '/content/final_hourly_load.xlsx'
+output_excel = '/content/final_hourly_prelevata.xlsx'
 all_months_hourly_df.to_excel(output_excel, index=True)
 
 # Trigger download in Colab
 files.download(output_excel)
+
+# Repeat the process for "immessa", the other folder, changing the zip file #
+# The only thing left to do is to fin the hourly minimum between "immessa" and "prelevata" #
+# Uploading le files through a zip folder like I did erlyer
+uploaded = files.upload()
+zip_path = list(uploaded.keys())[0]  
+zip_path = f'/content/{zip_path}'    
+
+extract_folder = '/content/data'
+
+with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    zip_ref.extractall(extract_folder)
+
+print("Unzipped to:", extract_folder)
+
+# Get the two relevant df
+prelevata = dfs['final_hourly_prelevata.csv']
+immessa = dfs['final_hourly_immessa.csv']
+
+# Ensure all values are numeric
+prelevata = prelevata.apply(pd.to_numeric, errors='coerce')
+immessa = immessa.apply(pd.to_numeric, errors='coerce')
+
+# Compute element-wise minimum
+min_table = pd.DataFrame(
+    np.minimum(prelevata.values, immessa.values),
+    index=prelevata.index,
+    columns=prelevata.columns
+)
+
+# Save the CSV to Colab filesystem
+min_csv_path = '/content/final_hourly_min.csv'
+min_table.to_csv(min_csv_path, sep=';', decimal=',')
+
+# Download the CSV
+files.download(min_csv_path)
