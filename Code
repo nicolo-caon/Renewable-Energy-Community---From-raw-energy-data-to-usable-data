@@ -8,9 +8,16 @@ import numpy as np
 from collections import defaultdict
 
 # First upload a folder as zip and extract files, it contains e-distribuzione raw data csv about #
+# Clear old data folder before loading new, since we are going to run the code two times to elaborate "immessa" and "prelevata"
+extract_folder = '/content/data'
+
+if os.path.exists(extract_folder):
+    shutil.rmtree(extract_folder)  
+    print(f"Previous data at deleted.")
+    
 uploaded = files.upload()
-zip_path = list(uploaded.keys())[0]   # e.g. "my_new_data.zip"
-zip_path = f'/content/{zip_path}'     # ensure full path
+zip_path = list(uploaded.keys())[0]   
+zip_path = f'/content/{zip_path}'    
 
 extract_folder = '/content/data'
 
