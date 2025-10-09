@@ -148,8 +148,16 @@ all_months_hourly_df.to_excel(output_excel, index=True)
 files.download(output_excel)
 
 # Repeat the process for "immessa", the other folder, changing the zip file #
+############################################################################################
+
 # The only thing left to do is to fin the hourly minimum between "immessa" and "prelevata" #
 # Uploading le files through a zip folder like I did erlyer
+extract_folder = '/content/data'
+
+if os.path.exists(extract_folder):
+    shutil.rmtree(extract_folder)  # delete old extracted data
+    print(f"Previous data at {extract_folder} deleted.")
+
 uploaded = files.upload()
 zip_path = list(uploaded.keys())[0]  
 zip_path = f'/content/{zip_path}'    
@@ -161,24 +169,41 @@ with zipfile.ZipFile(zip_path, 'r') as zip_ref:
 
 print("Unzipped to:", extract_folder)
 
-# Get the two relevant df
-prelevata = dfs['final_hourly_prelevata.csv']
-immessa = dfs['final_hourly_immessa.csv']
+# Detecting data
+prelevata_path = None
+immessa_path = None
+
+for root, dirs, files_list in os.walk('/content/data'):
+    for f in files_list:
+        lower_f = f.lower()
+        if 'prel' in lower_f and lower_f.endswith('.csv'):
+            prelevata_path = os.path.join(root, f)
+        elif 'imm' in lower_f and lower_f.endswith('.csv'):
+            immessa_path = os.path.join(root, f)
+
+print("Detected prelevata file:", prelevata_path)
+print("Detected immessa file:", immessa_path)
+
+# Correct reading (comma=separator, dot=decimal)
+prelevata = pd.read_csv(prelevata_path, sep=',', decimal='.', index_col='Date', parse_dates=True)
+immessa   = pd.read_csv(immessa_path, sep=',', decimal='.', index_col='Date', parse_dates=True)
 
 # Ensure all values are numeric
 prelevata = prelevata.apply(pd.to_numeric, errors='coerce')
 immessa = immessa.apply(pd.to_numeric, errors='coerce')
 
-# Compute element-wise minimum
-min_table = pd.DataFrame(
-    np.minimum(prelevata.values, immessa.values),
-    index=prelevata.index,
-    columns=prelevata.columns
-)
+# Compute aligned elementwise minimum, ignoring NaN
+min_table = prelevata.combine(immessa, np.fmin)
 
-# Save the CSV to Colab filesystem
-min_csv_path = '/content/final_hourly_min.csv'
-min_table.to_csv(min_csv_path, sep=';', decimal=',')
+print(prelevata.head())
+print(immessa.head())
+print(min_table.head())
 
-# Download the CSV
-files.download(min_csv_path)
+# Save the min file as an excel file
+output_path = "/content/min_table.xlsx"
+
+with pd.ExcelWriter(output_path, engine="openpyxl", date_format="DD/MM/YYYY") as writer:
+    min_table.to_excel(writer, sheet_name="Min Values")
+
+# Trigger browser download
+files.download(output_path)
