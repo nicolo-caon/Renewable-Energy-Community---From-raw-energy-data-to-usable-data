@@ -1,0 +1,92 @@
+# import libraries
+from google.colab import files
+import os
+import glob
+import pandas as pd
+
+# Give a file path, my is: './CER_analisi_energetica/Power_data/Immessa'. After dealing with "Immessa", I will repeat the process for "Prelevata"
+data_path  = './CER_analisi_energetica/Power_data/Immessa'
+
+# "Immessa" contains several subfolders, one foreach solar plant. I will run through all of them to create a single dataset for each solar plant containing all data
+subfolders = [f.path for f in os.scandir(data_path) if f.is_dir()]
+
+print(f"Found {len(subfolders)} subfolders:")
+for sf in subfolders:
+    print(" -", os.path.basename(sf))
+
+# e_Distribuzione provide data in 15-minutes intervals (energy uploaded/consumed in the last 15 mins). I need hourly data to calculate the incentive
+def sum_15min_to_hour(df):
+    cols = df.columns.tolist()
+    hourly_sums = []
+    for i in range(0, len(cols), 4):
+        group = cols[i:i+4]
+        hourly_sum = df[group].sum(axis=1)
+        hourly_sums.append(hourly_sum)
+    hourly_df = pd.concat(hourly_sums, axis=1)
+    hourly_df.columns = [f'Hour {i+1}' for i in range(len(hourly_df.columns))]
+    return hourly_df
+
+# Process each subfolder
+for folder in subfolders:
+    print(f"\n * Processing folder: {os.path.basename(folder)}")
+
+    # Find CSV files recursively
+    csv_files = glob.glob(os.path.join(folder, '**', '*.csv'), recursive=True)
+    print(f"  Found {len(csv_files)} CSV files")
+
+    dfs = {}
+
+    for f in csv_files:
+        try:
+            df = pd.read_csv(
+                f,
+                sep=';',        # delimiter
+                decimal=',',    # convert commas to dots
+                index_col=0,
+                engine='python',
+                on_bad_lines='warn'
+            )
+
+            # Drop "Giorno" (it's a col, I don't need it)
+            if 'Giorno' in df.columns:
+                df = df.drop(columns=['Giorno'])
+
+            # The last 15-mins of eash day of "Immessa" data are NaN for some reason, I set it to 0
+            df = df.fillna(0)
+            dfs[os.path.basename(f)] = df
+            print(f" Loaded: {os.path.basename(f)}. EVVIVA!")
+
+        except Exception as e:
+            print(f" Failed to read {f}: {e}. UFFA!")
+
+    if not dfs:
+        print(" No CSV files found, skipping folder. Should not have happened")
+        continue
+
+    # Combine all monthly data, different df for each plant
+    all_months_df = pd.concat(dfs.values(), axis=0)
+    all_months_df.index = pd.to_datetime(all_months_df.index, dayfirst=True, errors='coerce')
+    all_months_df = all_months_df.sort_index()
+
+    # Convert 15-min -> hourly
+    monthly_sums_hourly = {}
+    for name, df in dfs.items():
+        monthly_sums_hourly[name] = sum_15min_to_hour(df)
+
+    all_months_hourly_df = pd.concat(monthly_sums_hourly.values(), axis=0)
+    all_months_hourly_df.index = pd.to_datetime(all_months_hourly_df.index, dayfirst=True, errors='coerce')
+    all_months_hourly_df = all_months_hourly_df.loc[all_months_hourly_df.index.notna()]
+    all_months_hourly_df = all_months_hourly_df.sort_index()
+
+    # Format date
+    all_months_hourly_df.index = all_months_hourly_df.index.strftime('%d/%m/%Y')
+    all_months_hourly_df.index.name = 'Date'
+    
+    # In this case I also need Excel files so...
+    # Save to Excel (one file for each plant)
+    output_excel = f'/content/{os.path.basename(folder)}_concatenated.xlsx'
+    all_months_hourly_df.to_excel(output_excel)
+    print(f" Data saved and safe: {output_excel}")
+
+    # Trigger download
+    files.download(output_excel)
