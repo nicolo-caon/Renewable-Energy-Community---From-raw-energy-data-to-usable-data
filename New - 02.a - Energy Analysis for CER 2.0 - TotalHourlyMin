@@ -1,0 +1,222 @@
+# To calculate the incentive we need to sum the energy of the solar plants inside "Immessa" and "Prelevata".
+# Then we take the hourly minimum between "Immessa" and "Prelevata" for each day. That will be the energy receving the incentive
+
+# import libraries
+from google.colab import files
+import os
+import glob
+import pandas as pd
+import plotly.graph_objects as go
+import numpy as np
+
+# Defining the 2 data paths
+Immessa_path  = './CER_analisi_energetica/Power_data/Immessa_concatenated'
+Prelevata_path  = './CER_analisi_energetica/Power_data/Prelevata_concatenated'
+
+# Load all CSVs from a given path into a single concatenated DataFrame.
+
+def load_csvs_from_path(path):
+
+    csv_files = glob.glob(os.path.join(path, '**', '*.csv'), recursive=True)
+    print(f"Found {len(csv_files)} CSV files in {path}")
+
+    dfs = []
+    for f in csv_files:
+        try:
+            df = pd.read_csv(
+                f,
+                sep=',',        # Delimiter
+                decimal='.',    # Decimals separator
+                engine='python',
+                on_bad_lines='skip'
+            )
+            dfs.append(df)
+        except Exception as e:
+            print(f" Failed to read {f}: {e}. UFFA!")
+
+    if dfs:
+        combined = pd.concat(dfs, ignore_index=True)
+        print(f"Combined {len(dfs)} files into one DataFrame with {len(combined)} rows.")
+        return combined
+    else:
+        print("No data loaded. Should not have happened")
+        return pd.DataFrame()
+
+# Load both datasets
+immessa_df = load_csvs_from_path(Immessa_path)
+prelevata_df = load_csvs_from_path(Prelevata_path)
+
+# Preparing data to generate a plot of daily energy for both "Immessa" and "Prelevata"
+def normalize_energy_df(df):
+    # Clean column names removing whitespace
+    df.columns = df.columns.str.strip()
+
+    # Parse the Date column
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
+    if df['Date'].isna().all():
+        raise ValueError("No valid dates found in 'Date' column.")
+
+    # Identify hour columns (all cols should include 'Hour')
+    hour_cols = [c for c in df.columns if c.lower().startswith('hour')]
+
+    # Rename hour columns to just the hour number
+    rename_map = {c: ''.join(ch for ch in c if ch.isdigit()) for c in hour_cols}
+    df = df.rename(columns=rename_map)
+
+    # Convert hour columns to numeric
+    df[list(rename_map.values())] = df[list(rename_map.values())].apply(pd.to_numeric, errors='coerce')
+
+    return df
+
+
+def aggregate_total_energy(df):
+    # Sum all hourly columns per day
+    hour_cols = [c for c in df.columns if c.isdigit()]
+    return df.groupby('Date', as_index=False)[hour_cols].sum()
+
+
+immessa_df = normalize_energy_df(immessa_df)
+prelevata_df = normalize_energy_df(prelevata_df)
+
+immessa_total = aggregate_total_energy(immessa_df)
+prelevata_total = aggregate_total_energy(prelevata_df)
+
+# Plotting the aggregate daily energy to and from the grid
+# Compute total daily energy suming hourly data
+immessa_total['Total'] = immessa_total.drop(columns=['Date']).sum(axis=1)
+prelevata_total['Total'] = prelevata_total.drop(columns=['Date']).sum(axis=1)
+
+# Create plot
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=immessa_total['Date'],
+    y=immessa_total['Total'],
+    mode='lines+markers',
+    name="Immessa (to grid)",
+    line=dict(color='green')
+))
+
+fig.add_trace(go.Scatter(
+    x=prelevata_total['Date'],
+    y=prelevata_total['Total'],
+    mode='lines+markers',
+    name="Prelevata (from grid)",
+    line=dict(color='red')
+))
+
+fig.update_layout(
+    title="⚡ Daily Energy Balance: Immessa vs Prelevata",
+    xaxis_title="Date",
+    yaxis_title="Energy (Wh)",
+    hovermode="x unified",
+    template="plotly_white",
+    legend_title_text="Flow Direction",
+    width=950,
+    height=600
+)
+
+fig.show()
+
+# To calculate the incentive it's now necessary to compare data of "Immessa" and "Prelevata" and select the minimum of the two for each day and hour
+
+def min_energy_df(df1, df2):
+    # Ensure both have the same Date column and hour columns
+    common_hours = [c for c in df1.columns if c.isdigit() and c in df2.columns]
+
+    # Merge on Date to align days
+    merged = pd.merge(df1[['Date'] + common_hours], df2[['Date'] + common_hours],
+                      on='Date', suffixes=('_1', '_2'))
+
+    # Compute pairwise minima for each hour
+    result = pd.DataFrame()
+    result['Date'] = merged['Date']
+
+    for h in common_hours:
+        result[h] = merged[[f"{h}_1", f"{h}_2"]].min(axis=1)
+
+    return result
+
+df1 = pd.DataFrame(immessa_total)
+df2 = pd.DataFrame(prelevata_total)
+
+min_df = min_energy_df(df1, df2)
+
+output_path = "min_energy_df.xlsx"
+
+# Save with proper date format and sheet name
+with pd.ExcelWriter(output_path, engine="openpyxl", date_format="DD/MM/YYYY") as writer:
+    min_df.to_excel(writer, index=False, sheet_name="Min Values")
+
+# Download in excel
+try:
+    from google.colab import files
+    files.download(output_path)
+except ImportError:
+    print(f"Saved Excel file to {output_path}")
+
+# Not neccessary, I wanted a plot so first i had to sum all hours for each day
+# Then i ploted it
+# Of course this is not the same as the daily min between "Immessa" and "Prelevata" beause of the way it's calculated. And i do not consider this chart informative per se
+# Next step would be to calculate the incentive (it changes every hour, even if only slightly). Than multiply the incentive for the min we just calculated for every hour of every day
+# (We could also start from this last piece of code, summing all the daily min, multiplying by the average daiy incentive and it would effectively be the same)
+# Summing it all up we get what the GSE should pay us
+
+def normalize_min_df(min_df):
+    # Clean column names
+    min_df.columns = min_df.columns.str.strip()
+
+    # Parse the Date column
+    min_df['Date'] = pd.to_datetime(min_df['Date'], errors='coerce', dayfirst=True)
+    if min_df['Date'].isna().all():
+        raise ValueError("No valid dates found in 'Date' column.")
+
+    # Identify hour columns (those starting with 'Hour')
+    hour_cols = [c for c in min_df.columns if c.lower().startswith('hour')]
+
+    # Rename hour columns to just the hour number
+    rename_map = {c: ''.join(ch for ch in c if ch.isdigit()) for c in hour_cols}
+    min_df = min_df.rename(columns=rename_map)
+
+    # Convert hour columns to numeric
+    min_df[list(rename_map.values())] = min_df[list(rename_map.values())].apply(pd.to_numeric, errors='coerce')
+
+    return min_df
+
+
+def aggregate_min_df(min_df):
+    # Sum all hourly columns per day
+    hour_cols = [c for c in min_df.columns if c.isdigit()]
+    return min_df.groupby('Date', as_index=False)[hour_cols].sum()
+
+
+# Example usage:
+min_df = normalize_min_df(min_df)
+min_df = aggregate_min_df(min_df)
+
+
+min_df['min'] = min_df.drop(columns=['Date']).sum(axis=1)
+
+# Create the plot
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=min_df['Date'],
+    y=min_df['min'],
+    mode='lines+markers',
+    name="Immessa (to grid)",
+    line=dict(color='green')
+))
+
+fig.update_layout(
+    title="⚡ Hourly Min Daily Aggregate Energy Chart",
+    xaxis_title="Date",
+    yaxis_title="Energy (Wh)",
+    hovermode="x unified",
+    template="plotly_white",
+    legend_title_text="Flow Direction",
+    width=950,
+    height=600
+)
+
+fig.show()
