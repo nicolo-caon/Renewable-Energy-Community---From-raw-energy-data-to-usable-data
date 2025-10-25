@@ -66,7 +66,7 @@ for plant in combined_df['Plant'].unique():
 fig.update_layout(
     title="📈 Daily Energy 'Immessa' (plant to grid) per Plant",
     xaxis_title="Date",
-    yaxis_title="Energy (Wh)",
+    yaxis_title="Energy (kWh)",
     hovermode="x unified",
     template="plotly_white",
     legend_title_text="Plant",
